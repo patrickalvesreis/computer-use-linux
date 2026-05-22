@@ -311,11 +311,41 @@ fn kwin_window_script_source(
         return null;
     }}
 
-    var activeWindow = null;
-    try {{
-        activeWindow = workspace.activeWindow;
-    }} catch (error) {{}}
-    var windows = workspace.windowList().map(function(window) {{
+    function listWindows() {{
+        try {{
+            if (typeof workspace.windowList === "function") {{
+                return workspace.windowList();
+            }}
+        }} catch (error) {{}}
+        try {{
+            if (typeof workspace.clientList === "function") {{
+                return workspace.clientList();
+            }}
+        }} catch (error) {{}}
+        try {{
+            if (workspace.stackingOrder && typeof workspace.stackingOrder.length === "number") {{
+                return workspace.stackingOrder;
+            }}
+        }} catch (error) {{}}
+        return [];
+    }}
+
+    function activeWorkspaceWindow() {{
+        try {{
+            if (workspace.activeWindow !== null && workspace.activeWindow !== undefined) {{
+                return workspace.activeWindow;
+            }}
+        }} catch (error) {{}}
+        try {{
+            if (workspace.activeClient !== null && workspace.activeClient !== undefined) {{
+                return workspace.activeClient;
+            }}
+        }} catch (error) {{}}
+        return null;
+    }}
+
+    var activeWindow = activeWorkspaceWindow();
+    var windows = listWindows().map(function(window) {{
         var geo = geometry(window);
         return {{
             uuid: read(window, "uuid"),
@@ -442,11 +472,45 @@ pub(crate) fn kwin_activate_script_source(
             }}
         }} catch (error) {{}}
         try {{
+            if (typeof workspace.clientList === "function") {{
+                return workspace.clientList();
+            }}
+        }} catch (error) {{}}
+        try {{
             if (workspace.stackingOrder && typeof workspace.stackingOrder.length === "number") {{
                 return workspace.stackingOrder;
             }}
         }} catch (error) {{}}
         return [];
+    }}
+
+    function setActiveWindow(window) {{
+        var activationError = null;
+        try {{
+            if (workspace.activeWindow !== undefined) {{
+                workspace.activeWindow = window;
+                return true;
+            }}
+        }} catch (error) {{
+            activationError = error;
+        }}
+        try {{
+            if (workspace.activeClient !== undefined) {{
+                workspace.activeClient = window;
+                return true;
+            }}
+        }} catch (error) {{
+            activationError = error;
+        }}
+        try {{
+            if (typeof window.activate === "function") {{
+                window.activate();
+                return true;
+            }}
+        }} catch (error) {{
+            activationError = error;
+        }}
+        throw activationError || new Error("workspace refused activeWindow/activeClient assignment");
     }}
 
     function activateDesktop(window) {{
@@ -480,35 +544,7 @@ pub(crate) fn kwin_activate_script_source(
         }} catch (error) {{}}
         activateDesktop(targetWindow);
 
-        var activated = false;
-        var activationError = null;
-        try {{
-            workspace.activeWindow = targetWindow;
-            activated = true;
-        }} catch (error) {{
-            activationError = error;
-        }}
-        if (!activated) {{
-            try {{
-                workspace.activeClient = targetWindow;
-                activated = true;
-            }} catch (error) {{
-                activationError = error;
-            }}
-        }}
-        if (!activated) {{
-            try {{
-                if (typeof targetWindow.activate === "function") {{
-                    targetWindow.activate();
-                    activated = true;
-                }}
-            }} catch (error) {{
-                activationError = error;
-            }}
-        }}
-        if (!activated) {{
-            throw activationError || new Error("workspace refused activeWindow assignment");
-        }}
+        setActiveWindow(targetWindow);
 
         try {{
             if (typeof workspace.raiseWindow === "function") {{

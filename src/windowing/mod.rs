@@ -710,7 +710,13 @@ mod tests {
 
         assert!(script.contains(r#"var targetUuid = "b4dfacf8-a559-43c9-8b1f-ecd5cfd78359";"#));
         assert!(script.contains("targetWindow.minimized = false;"));
-        assert!(script.contains("workspace.activeWindow = targetWindow;"));
+        //assert!(script.contains("workspace.activeWindow = targetWindow;"));
+        assert!(script.contains("function setActiveWindow(window)"));
+        assert!(script.contains("workspace.activeWindow = window;"));
+        assert!(script.contains("workspace.activeClient = window;"));
+        assert!(script.contains(r#"typeof window.activate === "function""#));
+        assert!(script.contains("window.activate();"));
+        assert!(script.contains("setActiveWindow(targetWindow);"));
         assert!(script.contains(r#""ReceiveResult""#));
         assert!(!script.contains("WindowsRunner"));
     }
