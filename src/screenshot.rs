@@ -8,6 +8,7 @@ use std::{
     collections::HashMap,
     fs,
     path::{Path, PathBuf},
+    process::Command as StdCommand,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use zbus::{
@@ -41,9 +42,14 @@ pub async fn capture_screenshot() -> Result<ScreenshotCapture> {
         Ok(capture) => Ok(capture),
         Err(gnome_error) => match capture_with_portal().await {
             Ok(capture) => Ok(capture),
-            Err(portal_error) => Err(anyhow!(
-                "GNOME Shell screenshot failed: {gnome_error}; XDG portal screenshot failed: {portal_error}"
-            )),
+            Err(portal_error) => match capture_with_spectacle().await {
+                Ok(capture) => Ok(capture),
+                Err(spectacle_error) => Err(anyhow!(
+                    "GNOME Shell screenshot failed: {gnome_error}; \
+                     XDG portal screenshot failed: {portal_error}; \
+                     Spectacle screenshot failed: {spectacle_error}"
+                )),
+            },
         },
     }
 }
@@ -133,6 +139,40 @@ async fn capture_with_portal() -> Result<ScreenshotCapture> {
     let path = file_uri_to_path(&uri)?;
 
     read_png_as_capture(path, "xdg-desktop-portal", ScreenshotCleanup::Preserve).await
+}
+
+async fn capture_with_spectacle() -> Result<ScreenshotCapture> {
+    let spectacle = StdCommand::new("sh")
+        .arg("-c")
+        .arg("command -v spectacle")
+        .output()
+        .context("failed to probe spectacle")?;
+
+    if !spectacle.status.success() {
+        bail!("spectacle not found in PATH");
+    }
+
+    let path = temp_png_path("spectacle");
+
+    let status = StdCommand::new("spectacle")
+        .arg("--background")
+        .arg("--fullscreen")
+        .arg("--output")
+        .arg(&path)
+        .status()
+        .context("failed to run spectacle")?;
+
+    if !status.success() {
+        let _ = fs::remove_file(&path);
+        bail!("spectacle exited with status {status}");
+    }
+
+    read_png_as_capture(
+        path.clone(),
+        "spectacle",
+        ScreenshotCleanup::DeletePath(path),
+    )
+    .await
 }
 
 async fn portal_response_stream(connection: &zbus::Connection) -> Result<MessageStream> {
@@ -350,6 +390,49 @@ mod tests {
         assert!(error.to_string().contains("screenshot file was empty"));
         assert!(path.exists());
         let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn spectacle_temp_png_path_uses_expected_name_shape() {
+        let path = temp_png_path("spectacle");
+        let filename = path.file_name().and_then(|value| value.to_str()).unwrap();
+
+        assert!(filename.starts_with("computer-use-linux-spectacle-"));
+        assert!(filename.ends_with(".png"));
+    }
+
+    #[tokio::test]
+    async fn spectacle_capture_deletes_backend_temp_path_on_success() {
+        let path = test_path("spectacle-valid");
+        fs::write(&path, valid_png(1, 1)).unwrap();
+
+        let capture = read_png_as_capture(
+            path.clone(),
+            "spectacle",
+            ScreenshotCleanup::DeletePath(path.clone()),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(capture.source, "spectacle");
+        assert!(!path.exists());
+    }
+
+    #[tokio::test]
+    async fn spectacle_capture_deletes_backend_temp_path_on_parse_failure() {
+        let path = test_path("spectacle-invalid");
+        fs::write(&path, b"").unwrap();
+
+        let error = read_png_as_capture(
+            path.clone(),
+            "spectacle",
+            ScreenshotCleanup::DeletePath(path.clone()),
+        )
+        .await
+        .unwrap_err();
+
+        assert!(error.to_string().contains("screenshot file was empty"));
+        assert!(!path.exists());
     }
 
     #[tokio::test]

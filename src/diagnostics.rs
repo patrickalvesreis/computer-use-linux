@@ -75,6 +75,7 @@ pub struct PlatformReport {
     pub dbus_session_bus_address: Option<String>,
     pub xdg_runtime_dir: Option<String>,
     pub gnome_shell_version: Check,
+    pub spectacle: Check,
 }
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]
@@ -212,6 +213,9 @@ fn capability_map(
     }
     if portals.screenshot.ok {
         screenshot_backends.push("portal".to_string());
+    }
+    if platform.spectacle.ok {
+        screenshot_backends.push("spectacle".to_string());
     }
 
     let mut window_backends = Vec::new();
@@ -488,6 +492,7 @@ fn platform_report() -> PlatformReport {
         dbus_session_bus_address: dbus_session_address(),
         xdg_runtime_dir: xdg_runtime_dir().map(|path| path.display().to_string()),
         gnome_shell_version: command_check("gnome-shell", &["--version"]),
+        spectacle: command_path_check("spectacle"),
     }
 }
 
@@ -931,6 +936,7 @@ mod tests {
             dbus_session_bus_address: Some("unix:path=/run/user/1000/bus".to_string()),
             xdg_runtime_dir: Some("/run/user/1000".to_string()),
             gnome_shell_version: Check::ok("GNOME Shell 46.0"),
+            spectacle: Check::fail("missing"),
         }
     }
 
@@ -990,6 +996,58 @@ mod tests {
             ydotool_socket,
             uinput,
         }
+    }
+
+    fn portal_report(screenshot: Check) -> PortalReport {
+        PortalReport {
+            desktop_portal: Check::fail("missing"),
+            remote_desktop: Check::fail("missing"),
+            screencast: Check::fail("missing"),
+            screenshot,
+            input_capture: Check::fail("missing"),
+            mutter_remote_desktop: Check::fail("missing"),
+            mutter_screencast: Check::fail("missing"),
+        }
+    }
+
+    #[test]
+    fn capability_map_includes_spectacle_after_portal() {
+        let mut platform = platform_report();
+        platform.spectacle = Check::ok("/usr/bin/spectacle");
+        let portals = portal_report(Check::ok("ok"));
+        let accessibility = accessibility_report(Check::fail("missing"), Check::fail("false"));
+        let windowing = windowing_report(false, false);
+        let input = input_report(false);
+
+        let capabilities = capability_map(&platform, &portals, &accessibility, &windowing, &input);
+
+        assert_eq!(
+            capabilities.screenshot,
+            vec![
+                "gnome_shell".to_string(),
+                "portal".to_string(),
+                "spectacle".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn capability_map_prefers_spectacle_when_it_is_the_only_screenshot_backend() {
+        let mut platform = platform_report();
+        platform.gnome_shell_version = Check::fail("missing");
+        platform.spectacle = Check::ok("/usr/bin/spectacle");
+        let portals = portal_report(Check::fail("missing"));
+        let accessibility = accessibility_report(Check::fail("missing"), Check::fail("false"));
+        let windowing = windowing_report(false, false);
+        let input = input_report(false);
+
+        let capabilities = capability_map(&platform, &portals, &accessibility, &windowing, &input);
+
+        assert_eq!(capabilities.screenshot, vec!["spectacle".to_string()]);
+        assert_eq!(
+            capabilities.preferred.screenshot,
+            Some("spectacle".to_string())
+        );
     }
 
     #[test]
